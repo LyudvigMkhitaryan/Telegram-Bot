@@ -1,0 +1,94 @@
+TOKEN = "ВАШ_ТОКЕН_ОТ_БОТА"
+
+# Словарь для названий валют, можно расширять
+keys = {
+    'евро': 'EUR',
+    'доллар': 'USD',
+    'рубль': 'RUB'
+}
+import requests
+import json
+
+class APIException(Exception):
+    pass
+
+class CryptoConverter:
+    @staticmethod
+    def get_price(base: str, quote: str, amount: str):
+        base = base.lower()
+        quote = quote.lower()
+        if base == quote:
+            raise APIException(f'Невозможно перевести одинаковые валюты {base}.')
+
+        try:
+            amount = float(amount)
+        except ValueError:
+            raise APIException(f'Неверное количество: {amount}.')
+
+        from config import keys
+
+        if base not in keys:
+            raise APIException(f'Валюта {base} не поддерживается.')
+        if quote not in keys:
+            raise APIException(f'Валюта {quote} не поддерживается.')
+
+        base_ticker = keys[base]
+        quote_ticker = keys[quote]
+
+        # Используем API exchangerate.host
+        url = f"https://api.exchangerate.host/convert?from={base_ticker}&to={quote_ticker}&amount={amount}"
+
+        response = requests.get(url)
+        if response.status_code != 200:
+            raise APIException('Ошибка при запросе к API курса валют.')
+
+        data = response.json()
+
+        if 'result' not in data:
+            raise APIException('Ошибка обработки ответа от API.')
+
+        return data['result']
+import telebot
+from config import TOKEN, keys
+from extensions import CryptoConverter, APIException
+
+bot = telebot.TeleBot(TOKEN)
+
+@bot.message_handler(commands=['start', 'help'])
+def help_handler(message):
+    text = (
+        "Чтобы узнать цену валюты, отправьте сообщение в формате:\n"
+        "<имя валюты, цену которой хотите узнать> "
+        "<имя валюты, в которой узнать цену> "
+        "<количество>\n\n"
+        "Пример:\n"
+        "доллар рубль 100\n\n"
+        "Доступные команды:\n"
+        "/start - инструкция\n"
+        "/help - инструкция\n"
+        "/values - список доступных валют"
+    )
+    bot.reply_to(message, text)
+
+@bot.message_handler(commands=['values'])
+def values_handler(message):
+    text = "Доступные валюты:\n" + "\n".join(keys.keys())
+    bot.reply_to(message, text)
+
+@bot.message_handler(content_types=['text'])
+def convert_handler(message):
+    try:
+        parts = message.text.lower().split()
+        if len(parts) != 3:
+            raise APIException("Неверное количество параметров. Требуется 3: валюта1 валюта2 количество.")
+
+        base, quote, amount = parts
+        total = CryptoConverter.get_price(base, quote, amount)
+    except APIException as e:
+        bot.reply_to(message, f"Ошибка пользователя:\n{e}")
+    except Exception as e:
+        bot.reply_to(message, f"Неизвестная ошибка:\n{e}")
+    else:
+        bot.reply_to(message, f"{amount} {base} = {round(total, 4)} {quote}")
+
+bot.polling()
